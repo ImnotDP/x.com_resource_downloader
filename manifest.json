@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "X GIF 下载器",
+  "description": "为 X（Twitter）中的 GIF 动图添加一键下载按钮，并导出为 GIF 文件。",
+  "version": "1.1.1",
+  "minimum_chrome_version": "109",
+  "permissions": [
+    "downloads",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://video.twimg.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "X GIF 下载器"
+  }
+}
