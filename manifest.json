@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "X GIF 下载器",
-  "description": "为 X（Twitter）中的 GIF 动图添加一键下载按钮，并导出为 GIF 文件。",
-  "version": "1.1.1",
+  "description": "为 X（Twitter）中的 GIF 动图和普通视频添加下载按钮，分别导出为 GIF 和 MP4 文件。",
+  "version": "1.2.0",
   "minimum_chrome_version": "109",
   "permissions": [
     "downloads",

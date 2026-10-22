@@ -1,10 +1,12 @@
 const DOWNLOAD_MESSAGE = "DOWNLOAD_X_GIF";
+const DOWNLOAD_VIDEO_MESSAGE = "DOWNLOAD_X_VIDEO";
 const CONVERT_MESSAGE = "CONVERT_X_GIF";
 const RELEASE_MESSAGE = "RELEASE_X_GIF_URL";
 const OFFSCREEN_TARGET = "x-gif-offscreen";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const TRUSTED_MEDIA_HOST = "video.twimg.com";
 const TRUSTED_MEDIA_PREFIX = "/tweet_video/";
+const TRUSTED_VIDEO_PREFIXES = ["/ext_tw_video/", "/amplify_video/"];
 const DOWNLOAD_URL_FALLBACK_LIFETIME = 10 * 60 * 1000;
 
 let creatingOffscreenDocument;
@@ -28,6 +30,47 @@ function getTrustedGifUrl(value) {
   } catch {
     return null;
   }
+}
+
+function getTrustedVideoUrl(value) {
+  try {
+    const url = new URL(value);
+
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== TRUSTED_MEDIA_HOST ||
+      !TRUSTED_VIDEO_PREFIXES.some((prefix) => url.pathname.startsWith(prefix)) ||
+      !url.pathname.toLowerCase().endsWith(".mp4")
+    ) {
+      return null;
+    }
+
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function getSafeVideoFilename(value) {
+  const fallback = `x-video-${Date.now()}.mp4`;
+  const filename = typeof value === "string" ? value.trim() : "";
+
+  if (!filename) {
+    return fallback;
+  }
+
+  const sanitized = filename
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^\.+/, "")
+    .slice(0, 120);
+
+  if (!sanitized) {
+    return fallback;
+  }
+
+  return `${sanitized.replace(/\.(?:gif|mp4)$/i, "") || `x-video-${Date.now()}`}.mp4`;
 }
 
 function getSafeFilename(value) {
@@ -151,6 +194,27 @@ function downloadConvertedGif(url, filename) {
   });
 }
 
+function downloadVideo(url, filename) {
+  return new Promise((resolve, reject) => {
+    chrome.downloads.download(
+      {
+        url,
+        filename: getSafeVideoFilename(filename),
+        conflictAction: "uniquify",
+        saveAs: false
+      },
+      (downloadId) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+
+        resolve(downloadId);
+      }
+    );
+  });
+}
+
 async function convertAndDownload(url, filename) {
   await setupOffscreenDocument();
 
@@ -185,7 +249,33 @@ chrome.downloads.onChanged.addListener((delta) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== DOWNLOAD_MESSAGE || message.target === OFFSCREEN_TARGET) {
+  if (message?.target === OFFSCREEN_TARGET) {
+    return false;
+  }
+
+  if (message?.type === DOWNLOAD_VIDEO_MESSAGE) {
+    const url = getTrustedVideoUrl(message.url);
+
+    if (!url) {
+      sendResponse({
+        ok: false,
+        error: "没有找到可下载的 MP4 视频地址。"
+      });
+      return false;
+    }
+
+    downloadVideo(url, message.filename)
+      .then((downloadId) => {
+        sendResponse({ ok: true, downloadId });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message });
+      });
+
+    return true;
+  }
+
+  if (message?.type !== DOWNLOAD_MESSAGE) {
     return false;
   }
 

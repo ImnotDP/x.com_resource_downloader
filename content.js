@@ -1,6 +1,7 @@
 (() => {
   const SCRIPT_MARKER = "__xGifDownloaderInjected";
   const DOWNLOAD_MESSAGE = "DOWNLOAD_X_GIF";
+  const DOWNLOAD_VIDEO_MESSAGE = "DOWNLOAD_X_VIDEO";
   const VIDEO_SELECTOR = "video";
   const MEDIA_PLAYER_SELECTOR = '[data-testid="videoPlayer"]';
   const BUTTON_CLASS = "x-gif-download-button";
@@ -9,6 +10,7 @@
   const BUTTON_ATTRIBUTE = "data-x-gif-download-button";
   const GIF_VIDEO_PATH = "/tweet_video/";
   const GIF_THUMB_PATH = "/tweet_video_thumb/";
+  const VIDEO_PATHS = ["/ext_tw_video/", "/amplify_video/"];
   const STATUS_RESET_DELAY = 1800;
   const RESCAN_DELAY = 1500;
   const buttonsByVideo = new WeakMap();
@@ -47,6 +49,16 @@
       url &&
         url.hostname === "pbs.twimg.com" &&
         url.pathname.startsWith(GIF_THUMB_PATH)
+    );
+  }
+
+  function isXVideoUrl(value) {
+    const url = toUrl(value);
+    return Boolean(
+      url &&
+        url.hostname === "video.twimg.com" &&
+        VIDEO_PATHS.some((path) => url.pathname.startsWith(path)) &&
+        url.pathname.toLowerCase().endsWith(".mp4")
     );
   }
 
@@ -119,6 +131,10 @@
     );
   }
 
+  function findVideoUrl(video) {
+    return getMediaCandidates(video).find(isXVideoUrl) || null;
+  }
+
   function isGifVideo(video) {
     return (
       getMediaCandidates(video).some(isGifVideoUrl) ||
@@ -156,6 +172,16 @@
     return `x-gif-${Date.now()}.gif`;
   }
 
+  function getVideoDownloadFilename(video, url) {
+    const tweet = video.closest("article");
+    const statusLink = tweet?.querySelector('a[href*="/status/"]');
+    const statusId = statusLink?.href.match(/\/status\/(\d+)/)?.[1];
+    const videoId = toUrl(url)?.pathname.split("/").pop()?.replace(/\.mp4$/i, "");
+    const filename = statusId || videoId || Date.now();
+
+    return `x-video-${filename}.mp4`;
+  }
+
   function setButtonStatus(button, label, state = "idle") {
     button.dataset.state = state;
     button.querySelector(".x-gif-download-label").textContent = label;
@@ -166,7 +192,7 @@
 
     if (state !== "idle" && state !== "loading") {
       button.statusTimer = setTimeout(() => {
-        setButtonStatus(button, "下载 GIF");
+        setButtonStatus(button, button.defaultLabel);
       }, STATUS_RESET_DELAY);
     }
   }
@@ -226,13 +252,45 @@
     );
   }
 
-  function createDownloadButton(video) {
+  function downloadMp4(event, video, button) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    const url = findVideoUrl(video);
+
+    if (!url) {
+      setButtonStatus(button, "未找到视频", "error");
+      return;
+    }
+
+    setButtonStatus(button, "正在下载", "loading");
+
+    sendDownloadMessage(
+      {
+        type: DOWNLOAD_VIDEO_MESSAGE,
+        url,
+        filename: getVideoDownloadFilename(video, url)
+      },
+      (response) => {
+        setButtonStatus(
+          button,
+          response.ok ? "MP4 已下载" : "下载失败",
+          response.ok ? "success" : "error"
+        );
+      }
+    );
+  }
+
+  function createDownloadButton(video, isGif) {
+    const label = isGif ? "下载 GIF" : "下载 MP4";
     const button = document.createElement("button");
     button.type = "button";
     button.className = BUTTON_CLASS;
     button.setAttribute(BUTTON_ATTRIBUTE, "true");
-    button.setAttribute("aria-label", "下载 GIF");
-    button.title = "下载 GIF";
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.defaultLabel = label;
     button.style.cssText = `
       align-items: center;
       background: rgba(15, 20, 25, 0.88);
@@ -256,7 +314,7 @@
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.29a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 1.4-1.4l2.3 2.29V4a1 1 0 0 1 1-1Zm-7 14a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/>
       </svg>
-      <span class="x-gif-download-label">下载 GIF</span>
+      <span class="x-gif-download-label">${label}</span>
     `;
     button.querySelector("svg").style.cssText = `
       fill: currentColor;
@@ -269,7 +327,11 @@
       event.stopPropagation();
     });
     button.addEventListener("click", (event) => {
-      downloadGif(event, video, button);
+      if (isGif) {
+        downloadGif(event, video, button);
+      } else {
+        downloadMp4(event, video, button);
+      }
     });
 
     return button;
@@ -280,10 +342,13 @@
   }
 
   function addDownloadButton(video) {
-    if (
-      !(video instanceof HTMLVideoElement) ||
-      !isGifVideo(video)
-    ) {
+    if (!(video instanceof HTMLVideoElement)) {
+      return;
+    }
+
+    const isGif = isGifVideo(video);
+
+    if (!isGif && !findVideoUrl(video)) {
       return;
     }
 
@@ -310,7 +375,7 @@
       return;
     }
 
-    const button = createDownloadButton(video);
+    const button = createDownloadButton(video, isGif);
     button.video = video;
     video.setAttribute(PROCESSED_ATTRIBUTE, "true");
     host.classList.add(HOST_CLASS);
