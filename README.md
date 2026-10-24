@@ -33,6 +33,7 @@
 ## 文件说明
 
 - `manifest.json`：扩展配置。
+- `media-hook.js`：在页面主世界抓取 X 的推文数据（SSR 流式数据块与 API 响应），提取推文对应的 MP4/GIF 地址并转发给 `content.js`。
 - `content.js`：识别 GIF 动图和普通视频并添加对应下载按钮。
 - `background.js`：协调 GIF 转换、直接下载 MP4，并使用浏览器下载 API 保存文件。
 - `offscreen.html`、`offscreen.js`：在隐藏页面中执行 MP4 → GIF 转换。

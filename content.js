@@ -13,7 +13,10 @@
   const VIDEO_PATHS = ["/ext_tw_video/", "/amplify_video/"];
   const STATUS_RESET_DELAY = 1800;
   const RESCAN_DELAY = 1500;
+  const MEDIA_DATA_MESSAGE_KEY = "__xGifDlMediaData";
+  const MEDIA_HELLO_MESSAGE_KEY = "__xGifDlMediaHello";
   const buttonsByVideo = new WeakMap();
+  const mediaByTweet = new Map();
 
   if (globalThis[SCRIPT_MARKER]) {
     return;
@@ -68,6 +71,12 @@
       video.src,
       ...Array.from(video.querySelectorAll("source"), (source) => source.src)
     ].filter(Boolean);
+  }
+
+  function getTweetIdFromVideo(video) {
+    const tweet = video.closest("article");
+    const statusLink = tweet?.querySelector('a[href*="/status/"]');
+    return statusLink?.href.match(/\/status\/(\d+)/)?.[1] || null;
   }
 
   function getGifIdFromThumbnail(value) {
@@ -125,21 +134,42 @@
     }
 
     const gifId = getGifIdFromThumbnail(video.poster);
-    return (
+    const derivedUrl =
       getPerformanceGifUrl(gifId) ||
-      deriveGifUrlFromThumbnail(video.poster)
-    );
+      deriveGifUrlFromThumbnail(video.poster);
+
+    if (derivedUrl) {
+      return derivedUrl;
+    }
+
+    const tweetId = getTweetIdFromVideo(video);
+    const mediaEntry = tweetId ? mediaByTweet.get(tweetId) : null;
+
+    return mediaEntry?.gif || null;
   }
 
   function findVideoUrl(video) {
-    return getMediaCandidates(video).find(isXVideoUrl) || null;
+    const directUrl = getMediaCandidates(video).find(isXVideoUrl);
+
+    if (directUrl) {
+      return directUrl;
+    }
+
+    const tweetId = getTweetIdFromVideo(video);
+    const mediaEntry = tweetId ? mediaByTweet.get(tweetId) : null;
+
+    return mediaEntry?.video || null;
   }
 
   function isGifVideo(video) {
+    const tweetId = getTweetIdFromVideo(video);
+    const mediaEntry = tweetId ? mediaByTweet.get(tweetId) : null;
+
     return (
       getMediaCandidates(video).some(isGifVideoUrl) ||
       isGifThumbnailUrl(video.poster) ||
-      hasGifBadge(video)
+      hasGifBadge(video) ||
+      Boolean(mediaEntry?.gif)
     );
   }
 
@@ -156,9 +186,7 @@
   }
 
   function getDownloadFilename(video, url) {
-    const tweet = video.closest("article");
-    const statusLink = tweet?.querySelector('a[href*="/status/"]');
-    const statusId = statusLink?.href.match(/\/status\/(\d+)/)?.[1];
+    const statusId = getTweetIdFromVideo(video);
     const gifId = getGifIdFromVideoUrl(url);
 
     if (statusId) {
@@ -173,9 +201,7 @@
   }
 
   function getVideoDownloadFilename(video, url) {
-    const tweet = video.closest("article");
-    const statusLink = tweet?.querySelector('a[href*="/status/"]');
-    const statusId = statusLink?.href.match(/\/status\/(\d+)/)?.[1];
+    const statusId = getTweetIdFromVideo(video);
     const videoId = toUrl(url)?.pathname.split("/").pop()?.replace(/\.mp4$/i, "");
     const filename = statusId || videoId || Date.now();
 
@@ -396,6 +422,35 @@
     root.querySelectorAll?.(VIDEO_SELECTOR).forEach(addDownloadButton);
   }
 
+  function handleMediaData(videos) {
+    if (!videos || typeof videos !== "object") {
+      return;
+    }
+
+    for (const [tweetId, entry] of Object.entries(videos)) {
+      mediaByTweet.set(tweetId, entry);
+    }
+
+    scanForGifVideos();
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window || !event.data) {
+      return;
+    }
+
+    if (event.data[MEDIA_DATA_MESSAGE_KEY]) {
+      handleMediaData(event.data.videos);
+    }
+  });
+
+  window.postMessage(
+    {
+      [MEDIA_HELLO_MESSAGE_KEY]: true
+    },
+    "*"
+  );
+
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
       if (mutation.type === "attributes") {
@@ -415,13 +470,41 @@
     });
   });
 
-  scanForGifVideos();
-  observer.observe(document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ["poster", "src"]
+  // 观察 <html> 元素出现后再注册子树观察器,避免在文档
+  // 极早期(documentElement 尚不存在)注册失败。
+  let documentObserver = new MutationObserver(() => {
+    startObserving();
   });
+
+  documentObserver.observe(document, {
+    childList: true
+  });
+
+  function startObserving() {
+    if (!document.documentElement || observerStarted) {
+      return;
+    }
+
+    observerStarted = true;
+
+    if (documentObserver) {
+      documentObserver.disconnect();
+      documentObserver = null;
+    }
+
+    observer.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["poster", "src"]
+    });
+
+    scanForGifVideos();
+  }
+
+  let observerStarted = false;
+
+  startObserving();
 
   document.addEventListener(
     "loadedmetadata",

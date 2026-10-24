@@ -40,10 +40,16 @@ async function runConversionTest() {
   document.body.dataset.result = "ok";
   status.textContent = `转换成功：${signature}，${data.byteLength} 字节`;
 
-  sendOffscreenMessage({
-    type: "RELEASE_X_GIF_URL",
-    url: conversion.url
-  });
+  // 等待预览图解码完成后再释放 object URL，避免预览期间地址失效。
+  preview
+    .decode()
+    .catch(() => {})
+    .finally(() => {
+      sendOffscreenMessage({
+        type: "RELEASE_X_GIF_URL",
+        url: conversion.url
+      });
+    });
 }
 
 runConversionTest().catch((error) => {
